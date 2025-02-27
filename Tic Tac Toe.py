@@ -1,77 +1,126 @@
-
 import numpy as np
 
-class QAgent:
+
+class TicTacToeEnv:
+    """井字棋环境（符合OpenAI Gym接口风格）"""
+
     def __init__(self):
-        self.q_table = {}  # 状态-动作价值表 [^2]
-        self.alpha = 0.1   # 学习率（更新步长）
-        self.gamma = 0.9   # 未来奖励折扣系数 [^1]
+        self.board = [' '] * 9  # 3x3棋盘[^2]
+        self.current_player = 'X'
 
-    def get_state_key(self, board):
-        """将棋盘状态转化为字符串键"""
-        return ''.join(board)  # 例如['X','O',' '...]→"XO ..."[^3]
+    def reset(self):
+        self.board = [' '] * 9
+        return self._get_state()
 
-    def choose_action(self, state_key, valid_actions):
-        """ε-greedy策略选择动作"""
-        if np.random.rand() < 0.1 or state_key not in self.q_table:
-            return np.random.choice(valid_actions)  # 探索 [^5]
+    def _get_state(self):
+        return ''.join(self.board)  # 状态编码为字符串[^2]
+
+    def step(self, action):
+        """执行动作并返回（next_state, reward, done）"""
+        if self.board[action] != ' ':
+            return self._get_state(), -1, True  # 非法落子直接判负[^3]
+
+        self.board[action] = self.current_player
+
+        if self._check_win('X'):
+            reward = 1 if self.current_player == 'X' else -1
+            done = True
+        elif ' ' not in self.board:  # 平局判断
+            reward = 0
+            done = True
         else:
-            q_values = self.q_table[state_key]
-            return valid_actions[np.argmax([q_values[a] for a in valid_actions])]  # 利用
+            reward = 0
+            done = False
 
-def check_win(board, player):
-        # 检查行
-    for i in range(0, 9, 3):
-        if board[i] == board[i + 1] == board[i + 2] == player:
-                return True
-    # 检查列
-    for i in range(3):
-        if board[i] == board[i + 3] == board[i + 6] == player:
-                return True
-    # 检查对角线
-    if board[0] == board[4] == board[8] == player or board[2] == board[4] == board[6] == player:
-        return True
-    return False
+        self.current_player = 'O' if self.current_player == 'X' else 'X'
+        return self._get_state(), reward, done
+
+    def _check_win(self, player):
+        # 检查所有获胜可能性
+        win_states = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],  # 行
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],  # 列
+            [0, 4, 8], [2, 4, 6]  # 对角线
+        ]
+        return any(all(self.board[i] == player for i in line) for line in win_states)
 
 
+class QLearningAgent:
+    def __init__(self, alpha=0.1, gamma=0.9):
+        self.q_table = {}  # 状态-动作价值表[^2]
+        self.alpha = alpha  # 学习率
+        self.gamma = gamma  # 未来奖励折扣
 
-def train():
-    agent = QAgent()
-    for episode in range(5000):  # 训练5000局
-        board = [' '] * 9
+    def choose_action(self, state, valid_actions):
+        """ε-greedy策略（ε=0.1）"""
+        if np.random.rand() < 0.1 or state not in self.q_table:
+            return np.random.choice(valid_actions)
+        return valid_actions[np.argmax([self.q_table[state][a] for a in valid_actions])]
+
+    def update_q(self, state, action, reward, next_state):
+        """Q值更新公式"""
+        if state not in self.q_table:
+            self.q_table[state] = [0.0] * 9
+        max_next = max(self.q_table[next_state]) if next_state in self.q_table else 0
+        self.q_table[state][action] = (1 - self.alpha) * self.q_table[state][action] + self.alpha * (reward + self.gamma * max_next)
+
+def train(episodes=20000):
+    """训练过程"""
+    env = TicTacToeEnv()
+    agent = QLearningAgent()
+
+    for episode in range(episodes):
+        state = env.reset()
         done = False
         while not done:
-            state = agent.get_state_key(board)
-            valid_actions = [i for i, c in enumerate(board) if c == ' ']
-            if not valid_actions:
-                break
+            valid_actions = [i for i, c in enumerate(env.board) if c == ' ']
 
-            # 智能体行动
+            # 智能体行动（"X"玩家）
             action = agent.choose_action(state, valid_actions)
-            row, col = divmod(action, 3)
+            next_state, reward, done = env.step(action)
 
-            # 环境反馈（假设对手随机落子）
-            board[action] = 'X'
-            reward = 1 if check_win(board, 'X') else 0  # 获胜奖励 [^6]
-            done = reward == 1 or ' ' not in board
+            # 对手行动（随机玩家）
+            if not done:
+                _, _, done = env.step(np.random.choice(valid_actions))
 
-            # Q值更新（你只需观察TD误差计算）
-            if state not in agent.q_table:
-                agent.q_table[state] = [0.0] * 9
-            old_q = agent.q_table[state][action]
+                # Q值更新
+            agent.update_q(state, action, reward, next_state)
+            state = next_state
 
-            next_state = agent.get_state_key(board)
-            max_next_q = max(agent.q_table[next_state]) if next_state in agent.q_table else 0
-            agent.q_table[state][action] = old_q + agent.alpha * (reward + agent.gamma * max_next_q - old_q)
+        if (episode + 1) % 1000 == 0:
+            print(f"完成训练局数: {episode + 1} / {episodes}, 已知状态数: {len(agent.q_table)}")
 
-def play_vs_agent(agent):
-    board = [' ']*9
-    for _ in range(4):
-        action = agent.choose_action(agent.get_state_key(board), [i for i,c in enumerate(board) if c==' '])
-        board[action] = 'X'
-        if check_win(board, 'X'): return 'Agent Wins'
-        # 玩家手动输入位置（示例）
-        player_move = int(input("Enter position (0-8):"))
-        board[player_move] = 'O'
-        if check_win(board, 'O'): return 'Player Wins'
-    return 'Draw'
+    return agent
+
+
+def play_human_vs_agent(agent):
+    """人类玩家对战AI"""
+    env = TicTacToeEnv()
+    state = env.reset()
+
+    for _ in range(9):
+        print("\n当前棋盘:")
+        for i in range(0, 9, 3):
+            print('|'.join(env.board[i:i + 3]))
+
+        if env.current_player == 'X':  # 人类玩家回合
+            while True:
+                action = int(input("输入落子位置(0-8):"))
+                if 0 <= action <= 8 and env.board[action] == ' ':
+                    break
+        else:  # AI回合
+            valid_actions = [i for i, c in enumerate(env.board) if c == ' ']
+            action = agent.choose_action(state, valid_actions)
+
+        state, _, done = env.step(action)
+        if done:
+            print("游戏结束!")
+            break
+
+
+# 执行训练并测试
+if __name__ == "__main__":
+    print("开始训练...")
+    trained_agent = train(episodes=5000)
+    print("\n训练完成！最终掌握的棋局状态数量:", len(trained_agent.q_table))
+    play_human_vs_agent(trained_agent)

@@ -15,7 +15,7 @@ class BanditAgent:
             return np.argmax(self.Q)  # 利用
 
     def policy(self, observation):
-        #
+        #W
         return
 
     def ucb_action(self, t):
