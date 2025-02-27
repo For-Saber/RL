@@ -1,42 +1,50 @@
+
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+matplotlib.use('TkAgg') # 或者尝试 'Qt5Agg'
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+
+
 
 class TicTacToeEnv:
-    """井字棋环境（符合OpenAI Gym接口风格）"""
+    """修正后的井字棋环境"""
 
     def __init__(self):
-        self.board = [' '] * 9  # 3x3棋盘
+        self.board = [' '] * 9
         self.current_player = 'X'
 
     def reset(self):
         self.board = [' '] * 9
+        self.current_player = 'X'
         return self._get_state()
 
     def _get_state(self):
-        return ''.join(self.board)  # 状态编码为字符串
+        return ''.join(self.board)
 
     def step(self, action):
-        """执行动作并返回（next_state, reward, done）"""
         if self.board[action] != ' ':
-            return self._get_state(), -1, True  # 非法落子直接判负
+            return self._get_state(), -1, True  # 非法动作立即判负
 
-        self.board[action] = self.current_player
+        current_player = self.current_player
+        self.board[action] = current_player
 
-        if self._check_win('X'):
-            reward = 1 if self.current_player == 'X' else -1
+        # 修正胜负判断逻辑：检查当前玩家是否获胜
+        if self._check_win(current_player):
+            reward = 1 if current_player == 'X' else -1
             done = True
-        elif ' ' not in self.board:  # 平局判断
+        elif ' ' not in self.board:  # 平局
             reward = 0
             done = True
         else:
             reward = 0
             done = False
 
-        self.current_player = 'O' if self.current_player == 'X' else 'X'
+        self.current_player = 'O' if current_player == 'X' else 'X'
         return self._get_state(), reward, done
 
     def _check_win(self, player):
-        # 检查所有获胜可能性
         win_states = [
             [0, 1, 2], [3, 4, 5], [6, 7, 8],  # 行
             [0, 3, 6], [1, 4, 7], [2, 5, 8],  # 列
@@ -45,125 +53,134 @@ class TicTacToeEnv:
         return any(all(self.board[i] == player for i in line) for line in win_states)
 
     def get_valid_actions(self):
-        """安全获取有效动作列表，附带有效性检查"""
-        actions = [i for i, c in enumerate(self.board) if c == ' ']
-        if len(actions) == 0:
-            self.done = True  # 自动设置终止标志
-        return actions
+        return [i for i, c in enumerate(self.board) if c == ' ']
+
 
 class QLearningAgent:
+    """改进后的Q学习智能体"""
+
     def __init__(self, alpha=0.1, gamma=0.9):
-        self.q_table = {}  # 状态-动作价值表[^2]
-        self.alpha = alpha  # 学习率
-        self.gamma = gamma  # 未来奖励折扣
+        self.q_table = {}
+        self.alpha = alpha
+        self.gamma = gamma
 
     def choose_action(self, state, valid_actions):
-
         if not valid_actions:
-            raise EnvironmentError("Cannot choose action when no valid actions exist")
-        #ε-greedy策略（ε=0.1）
+            raise ValueError("No valid actions available")
+
+        # ε-greedy策略
         if np.random.rand() < 0.1 or state not in self.q_table:
             return np.random.choice(valid_actions)
-        return valid_actions[np.argmax([self.q_table[state][a] for a in valid_actions])]
+
+        q_values = [self.q_table[state][a] for a in valid_actions]
+        return valid_actions[np.argmax(q_values)]
 
     def update_q(self, state, action, reward, next_state):
-        #Q值更新公式
         if state not in self.q_table:
             self.q_table[state] = [0.0] * 9
+
         max_next = max(self.q_table[next_state]) if next_state in self.q_table else 0
-        self.q_table[state][action] = (1 - self.alpha) * self.q_table[state][action] + self.alpha * (reward + self.gamma * max_next)
+        self.q_table[state][action] = (1 - self.alpha) * self.q_table[state][action] + \
+                                      self.alpha * (reward + self.gamma * max_next)
 
 
-class TrainingVisualizer:
-    """训练过程可视化模块"""
-
-    def __init__(self):
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(10, 8))
-        self.win_rates = []
-        self.q_sizes = []
-        self.steps = []
-
-    def update(self, episode, wins, q_size, steps):
-        """更新绘图数据"""
-        # 计算胜率（滑动窗口取最近100局的胜率）[^2]
-        window_size = 100
-        recent_wins = wins[-window_size:]
-        win_rate = sum(recent_wins) / len(recent_wins) if len(recent_wins) > 0 else 0
-
-        self.win_rates.append(win_rate)
-        self.q_sizes.append(q_size)
-        self.steps.append(steps)
-
-        # 清空画布
-        self.ax1.clear()
-        self.ax2.clear()
-
-        # 绘制胜率曲线
-        self.ax1.plot(self.win_rates, 'g-', label='Win Rate (100-episode avg)')
-        self.ax1.set_ylabel('Win Rate')
-        self.ax1.set_ylim(0, 1)
-        self.ax1.legend()
-
-        # 绘制Q表大小和平均步数曲线
-        self.ax2.plot(self.q_sizes, 'b-', label='Q-table Size')
-        self.ax2.plot(self.steps, 'r--', label='Average Steps')
-        self.ax2.set_xlabel('Training Episodes')
-        self.ax2.legend()
-
-        plt.pause(0.01)  # 轻微刷新图表
-
-
-def train(episodes=20000):
-    """改进后的训练函数（含可视化）"""
+def train(episodes=30000):
     env = TicTacToeEnv()
     agent = QLearningAgent()
     vis = TrainingVisualizer()
 
-    total_wins = []  # 记录所有胜负结果（1=胜利，0=失败或平局）
-    avg_steps = []
-    steps_buffer = []
+    win_history = []
+    step_history = []
 
     for episode in range(episodes):
         state = env.reset()
         done = False
+        total_reward = 0
         steps = 0
 
         while not done:
-            # 玩家行动 ---------------------------------------------------
-            valid_actions_player = env.get_valid_actions()  # 新增辅助方法[^3]
-            if not valid_actions_player:  # 保护性判断
+            # 玩家X回合
+            valid_actions = env.get_valid_actions()
+            if not valid_actions:
                 break
-            action = agent.choose_action(state, valid_actions_player)
+
+            action = agent.choose_action(state, valid_actions)
             next_state, reward, done = env.step(action)
-            agent.update_q(state, action, reward, next_state)
-            state = next_state
 
-            if done:  # 玩家行动终结棋局时直接退出
+            # 立即更新Q表
+            agent.update_q(state, action, reward, next_state)
+
+            # 记录结果
+            if done:
+                win_history.append(1 if reward == 1 else 0)
+                state = next_state
                 break
 
-            # 对手行动 ---------------------------------------------------
-            valid_actions_opponent = env.get_valid_actions()
-            opponent_action = np.random.choice(valid_actions_opponent)
-            next_state, _, done = env.step(opponent_action)  # 必须获取对手行动后的状态
-            state = next_state  # 更新状态
+            # 对手O回合
+            valid_actions = env.get_valid_actions()
+            opponent_action = np.random.choice(valid_actions)
+            next_state, opponent_reward, done = env.step(opponent_action)
 
-            agent.update_q(state, action, reward, next_state)
+            # 使用对手回合的结果更新玩家Q表
+            player_reward = -1 if opponent_reward == 1 else 0
+            agent.update_q(state, action, player_reward, next_state)
+
             state = next_state
             steps += 1
+            if done:
+                win_history.append(1 if player_reward == 1 else 0)
 
-        # 记录结果
-        total_wins.append(1 if reward == 1 else 0)
-        steps_buffer.append(steps)
-        if (episode + 1) % 100 == 0:  # 每100局计算平均步数[^2]
-            avg_steps.append(np.mean(steps_buffer))
-            steps_buffer = []
+        step_history.append(steps)
 
-        # 更新可视化（每100局）
-        if (episode + 1) % 100 == 0:
-            vis.update(episode + 1, total_wins, len(agent.q_table), avg_steps[-1] if len(avg_steps) > 0 else 0)
+        # 每100局更新可视化
+        if episode % 100 == 0:
+            # 计算最近100局的胜率
+            win_rate = np.mean(win_history[-100:]) if len(win_history) > 0 else 0
+            # 计算最近100局的平均步数
+            avg_steps = np.mean(step_history[-100:]) if len(step_history) > 0 else 0
+            vis.update(episode, win_rate, len(agent.q_table), avg_steps)
 
-    plt.show()  # 训练结束后保持图表显示
+    plt.ioff()
+    plt.show()
     return agent
+
+
+class TrainingVisualizer:
+    def __init__(self):
+        plt.ion()
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(10, 8))
+        self.x_data = []
+        self.win_rates = []
+        self.q_sizes = []
+        self.avg_steps = []
+
+    def update(self, episode, win_rate, q_size, avg_step):
+        self.x_data.append(episode)
+        self.win_rates.append(win_rate)
+        self.q_sizes.append(q_size)
+        self.avg_steps.append(avg_step)
+
+        self.ax1.clear()
+        self.ax2.clear()
+
+        # 胜率图表
+        self.ax1.plot(self.x_data, self.win_rates, 'g-')
+        self.ax1.set_ylabel('Win Rate')
+        self.ax1.set_ylim(0, 1)
+        self.ax1.grid(True)
+
+        # Q表和步数图表
+        self.ax2.plot(self.x_data, self.q_sizes, 'b-', label='Q-table Size')
+        self.ax2.plot(self.x_data, self.avg_steps, 'r--', label='Average Steps')
+        self.ax2.set_xlabel('Training Episodes')
+        self.ax2.legend()
+        self.ax2.grid(True)
+
+        plt.tight_layout()
+        plt.draw()
+        plt.pause(0.001)
+
+# 其余代码保持不变...
 
 def play_human_vs_agent(agent):
     """人类玩家对战AI"""
